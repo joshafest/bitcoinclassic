@@ -65,12 +65,6 @@ using namespace std;
 namespace {
     const int MAX_OUTBOUND_CONNECTIONS = 8;
 
-    struct ListenSocket {
-        SOCKET socket;
-        bool whitelisted;
-
-        ListenSocket(SOCKET socket, bool whitelisted) : socket(socket), whitelisted(whitelisted) {}
-    };
 }
 
 //
@@ -940,7 +934,7 @@ static bool AttemptToEvictConnection(bool fPreferNewConnection) {
     return true;
 }
 
-static void AcceptConnection(const ListenSocket& hListenSocket) {
+void CConnman::AcceptConnection(const ListenSocket& hListenSocket) {
     struct sockaddr_storage sockaddr;
     socklen_t len = sizeof(sockaddr);
     SOCKET hSocket = accept(hListenSocket.socket, (struct sockaddr*)&sockaddr, &len);
@@ -1013,7 +1007,7 @@ static void AcceptConnection(const ListenSocket& hListenSocket) {
     }
 }
 
-void ThreadSocketHandler()
+void CConnman::ThreadSocketHandler()
 {
     unsigned int nPrevNodeCount = 0;
     while (true)
@@ -1413,7 +1407,7 @@ void MapPort(bool)
 
 
 
-void ThreadDNSAddressSeed()
+void CConnman::ThreadDNSAddressSeed()
 {
     // goal: only query DNS seeds if address need is acute
     if ((addrman.size() > 0) &&
@@ -1503,7 +1497,7 @@ void DumpData()
     }
 }
 
-void static ProcessOneShot()
+void CConnman::ProcessOneShot()
 {
     string strDest;
     {
@@ -1521,7 +1515,7 @@ void static ProcessOneShot()
     }
 }
 
-void ThreadOpenConnections()
+void CConnman::ThreadOpenConnections()
 {
     // Connect to specific addresses
     if (mapArgs.count("-connect") && mapMultiArgs["-connect"].size() > 0)
@@ -1659,7 +1653,7 @@ void ThreadOpenConnections()
     }
 }
 
-void ThreadOpenAddedConnections()
+void CConnman::ThreadOpenAddedConnections()
 {
     {
         LOCK(cs_vAddedNodes);
@@ -1760,7 +1754,7 @@ bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOu
 }
 
 
-void ThreadMessageHandler()
+void CConnman::ThreadMessageHandler()
 {
     boost::mutex condition_mutex;
     boost::unique_lock<boost::mutex> lock(condition_mutex);
@@ -1799,7 +1793,7 @@ void ThreadMessageHandler()
                 TRY_LOCK(pnode->cs_vRecvMsg, lockRecv);
                 if (lockRecv)
                 {
-                    if (!g_signals.ProcessMessages(pnode))
+                    if (!g_signals.ProcessMessages(pnode, *this))
                         pnode->CloseSocketDisconnect();
 
                     if (pnode->nSendSize < SendBufferSize())
@@ -1817,7 +1811,7 @@ void ThreadMessageHandler()
             {
                 TRY_LOCK(pnode->cs_vSend, lockSend);
                 if (lockSend)
-                    g_signals.SendMessages(pnode);
+                    g_signals.SendMessages(pnode, *this);
             }
             boost::this_thread::interruption_point();
         }
@@ -1987,7 +1981,11 @@ void static Discover(boost::thread_group& threadGroup)
 #endif
 }
 
-void StartNode(boost::thread_group& threadGroup, CScheduler& scheduler)
+CConnman::CConnman()
+{
+}
+
+bool StartNode(CConnman& connman, boost::thread_group& threadGroup, CScheduler& scheduler, std::string& strNodeError)
 {
     uiInterface.InitMessage(_("Loading addresses..."));
     // Load addresses for peers.dat
@@ -2015,6 +2013,18 @@ void StartNode(boost::thread_group& threadGroup, CScheduler& scheduler)
     LogPrintf("Loaded %i addresses from peers.dat  %dms\n",
            addrman.size(), GetTimeMillis() - nStart);
     fAddressesInitialized = true;
+	
+	Discover(threadGroup);
+
+    bool ret = connman.Start(threadGroup, strNodeError);
+
+    // Dump network addresses
+    scheduler.scheduleEvery(DumpData, DUMP_ADDRESSES_INTERVAL);
+    return ret;
+}
+
+bool CConnman::Start(boost::thread_group& threadGroup, std::string& strNodeError)
+{
 
     if (semOutbound == NULL) {
         // initialize semaphore
@@ -2025,7 +2035,6 @@ void StartNode(boost::thread_group& threadGroup, CScheduler& scheduler)
     if (pnodeLocalHost == NULL)
         pnodeLocalHost = new CNode(INVALID_SOCKET, CAddress(CService("127.0.0.1", 0), nLocalServices));
 
-    Discover(threadGroup);
 
     //
     // Start threads
@@ -2034,41 +2043,41 @@ void StartNode(boost::thread_group& threadGroup, CScheduler& scheduler)
     if (!GetBoolArg("-dnsseed", true))
         LogPrintf("DNS seeding disabled\n");
     else
-        threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "dnsseed", &ThreadDNSAddressSeed));
+        threadGroup.create_thread(boost::bind(&TraceThread<boost::function<void()> >, "dnsseed", boost::function<void()>(boost::bind(&CConnman::ThreadDNSAddressSeed, this))));
 
     // Map ports with UPnP
     MapPort(GetBoolArg("-upnp", DEFAULT_UPNP));
 
     // Send and receive from sockets, accept connections
-    threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "net", &ThreadSocketHandler));
+    threadGroup.create_thread(boost::bind(&TraceThread<boost::function<void()> >, "net", boost::function<void()>(boost::bind(&CConnman::ThreadSocketHandler, this))));
 
     // Initiate outbound connections from -addnode
-    threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "addcon", &ThreadOpenAddedConnections));
+    threadGroup.create_thread(boost::bind(&TraceThread<boost::function<void()> >, "addcon", boost::function<void()>(boost::bind(&CConnman::ThreadOpenAddedConnections, this))));
 
     // Initiate outbound connections
-    threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "opencon", &ThreadOpenConnections));
+    threadGroup.create_thread(boost::bind(&TraceThread<boost::function<void()> >, "opencon", boost::function<void()>(boost::bind(&CConnman::ThreadOpenConnections, this))));
 
     // Process messages
-    threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "msghand", &ThreadMessageHandler));
+    threadGroup.create_thread(boost::bind(&TraceThread<boost::function<void()> >, "msghand", boost::function<void()>(boost::bind(&CConnman::ThreadMessageHandler, this))));
 
-    // Dump network addresses
-    scheduler.scheduleEvery(&DumpData, DUMP_ADDRESSES_INTERVAL);
+    return true;
+	
+	
 }
 
-bool StopNode()
+bool StopNode(CConnman& connman)
 {
     LogPrintf("StopNode()\n");
     MapPort(false);
-    if (semOutbound)
-        for (int i=0; i<MAX_OUTBOUND_CONNECTIONS; i++)
-            semOutbound->post();
+    
 
     if (fAddressesInitialized)
     {
         DumpData();
         fAddressesInitialized = false;
     }
-
+	
+	connman.Stop();
     return true;
 }
 
@@ -2079,27 +2088,7 @@ public:
 
     ~CNetCleanup()
     {
-        // Close sockets
-        BOOST_FOREACH(CNode* pnode, vNodes)
-            if (pnode->hSocket != INVALID_SOCKET)
-                CloseSocket(pnode->hSocket);
-        BOOST_FOREACH(ListenSocket& hListenSocket, vhListenSocket)
-            if (hListenSocket.socket != INVALID_SOCKET)
-                if (!CloseSocket(hListenSocket.socket))
-                    LogPrintf("CloseSocket(hListenSocket) failed with error %s\n", NetworkErrorString(WSAGetLastError()));
-
-        // clean up some globals (to help leak detection)
-        BOOST_FOREACH(CNode *pnode, vNodes)
-            delete pnode;
-        BOOST_FOREACH(CNode *pnode, vNodesDisconnected)
-            delete pnode;
-        vNodes.clear();
-        vNodesDisconnected.clear();
-        vhListenSocket.clear();
-        delete semOutbound;
-        semOutbound = NULL;
-        delete pnodeLocalHost;
-        pnodeLocalHost = NULL;
+       
 
 #ifdef WIN32
         // Shutdown Windows Sockets
@@ -2109,6 +2098,38 @@ public:
 }
 instance_of_cnetcleanup;
 
+void CConnman::Stop()
+{
+    if (semOutbound)
+        for (int i=0; i<(MAX_OUTBOUND_CONNECTIONS + MAX_FEELER_CONNECTIONS); i++)
+            semOutbound->post();
+
+    // Close sockets
+    BOOST_FOREACH(CNode* pnode, vNodes)
+        if (pnode->hSocket != INVALID_SOCKET)
+            CloseSocket(pnode->hSocket);
+    BOOST_FOREACH(ListenSocket& hListenSocket, vhListenSocket)
+        if (hListenSocket.socket != INVALID_SOCKET)
+            if (!CloseSocket(hListenSocket.socket))
+                LogPrintf("CloseSocket(hListenSocket) failed with error %s\n", NetworkErrorString(WSAGetLastError()));
+
+    // clean up some globals (to help leak detection)
+    BOOST_FOREACH(CNode *pnode, vNodes)
+        delete pnode;
+    BOOST_FOREACH(CNode *pnode, vNodesDisconnected)
+        delete pnode;
+    vNodes.clear();
+    vNodesDisconnected.clear();
+    vhListenSocket.clear();
+    delete semOutbound;
+    semOutbound = NULL;
+    delete pnodeLocalHost;
+    pnodeLocalHost = NULL;
+}
+
+CConnman::~CConnman()
+{
+}
 
 
 

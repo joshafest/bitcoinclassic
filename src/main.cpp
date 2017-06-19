@@ -2639,7 +2639,7 @@ static bool ActivateBestChainStep(CValidationState& state, const CChainParams& c
  * or an activated best chain. pblock is either NULL or a pointer to a block
  * that is already loaded (to avoid loading it again from disk).
  */
-bool ActivateBestChain(CValidationState &state, const CChainParams& chainparams, const CBlock *pblock) {
+bool ActivateBestChain(CValidationState &state, const CChainParams& chainparams, const CBlock *pblock, CConnman* connman) {
     CBlockIndex *pindexMostWork = NULL;
     do {
         boost::this_thread::interruption_point();
@@ -3249,7 +3249,7 @@ static bool IsSuperMajority(int minVersion, const CBlockIndex* pstart, unsigned 
 }
 
 
-bool ProcessNewBlock(CValidationState& state, const CChainParams& chainparams, const CNode* pfrom, const CBlock* pblock, bool fForceProcessing, CDiskBlockPos* dbp)
+bool ProcessNewBlock(CValidationState& state, const CChainParams& chainparams, const CNode* pfrom, const CBlock* pblock, bool fForceProcessing, CDiskBlockPos* dbp, CConnman* connman)
 {
     // Preliminary checks
     bool checked = CheckBlock(*pblock, state);
@@ -3273,7 +3273,7 @@ bool ProcessNewBlock(CValidationState& state, const CChainParams& chainparams, c
             return error("%s: AcceptBlock FAILED", __func__);
     }
 
-    if (!ActivateBestChain(state, chainparams, pblock))
+    if (!ActivateBestChain(state, chainparams, pblock, connman))
         return error("%s: ActivateBestChain failed", __func__);
 
     return true;
@@ -4117,7 +4117,7 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
     }
 }
 
-bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, int64_t nTimeReceived)
+bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, int64_t nTimeReceived, CConnman& connman)
 {
     const CChainParams& chainparams = Params();
     RandAddSeedPerfmon();
@@ -5330,7 +5330,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
 }
 
 // requires LOCK(cs_vRecvMsg)
-bool ProcessMessages(CNode* pfrom)
+bool ProcessMessages(CNode* pfrom, CConnman& connman)
 {
     const CChainParams& chainparams = Params();
     //if (fDebug)
@@ -5407,7 +5407,7 @@ bool ProcessMessages(CNode* pfrom)
         bool fRet = false;
         try
         {
-            fRet = ProcessMessage(pfrom, strCommand, vRecv, msg.nTime);
+            fRet = ProcessMessage(pfrom, strCommand, vRecv, msg.nTime, connman);
             boost::this_thread::interruption_point();
         }
         catch (const std::ios_base::failure& e)
@@ -5451,7 +5451,7 @@ bool ProcessMessages(CNode* pfrom)
 }
 
 
-bool SendMessages(CNode* pto)
+bool SendMessages(CNode* pto, CConnman& connman)
 {
     const bool fReindex = Blocks::DB::instance()->isReindexing();
     const Consensus::Params& consensusParams = Params().GetConsensus();
