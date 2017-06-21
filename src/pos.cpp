@@ -35,11 +35,7 @@ uint256 ComputeStakeModifier(const CBlockIndex* pindexPrev, const uint256& kerne
 // Check whether the coinstake timestamp meets protocol
 bool CheckCoinStakeTimestamp(int64_t nTimeBlock, int64_t nTimeTx)
 {
-    const Consensus::Params& params = Params().GetConsensus();
-    if (params.IsProtocolV2(nTimeBlock))
-        return (nTimeBlock == nTimeTx) && ((nTimeTx & params.nStakeTimestampMask) == 0);
-    else
-        return (nTimeBlock == nTimeTx);
+    return (nTimeBlock == nTimeTx) && ((nTimeTx & STAKE_TIMESTAMP_MASK) == 0);
 }
 
 // Simplified version of CheckCoinStakeTimestamp() to check header-only timestamp

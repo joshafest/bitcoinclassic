@@ -110,7 +110,7 @@ static void CheckBlockIndex(const Consensus::Params& consensusParams);
 /** Constant stuff for coinbase transactions we create: */
 CScript COINBASE_FLAGS;
 
-const string strMessageMagic = "BlackCoin Signed Message:\n";
+const string strMessageMagic = "DopeCoin Signed Message:\n";
 
 // Internal stuff
 namespace {
@@ -1679,12 +1679,12 @@ bool ReadFromDisk(CTransaction& tx, CDiskTxPos& txindex)
 
 CAmount GetProofOfWorkSubsidy()
 {
-	return 10000 * COIN;
+	return 0 * COIN;
 }
 
 CAmount GetProofOfStakeSubsidy()
 {
-    return COIN * 3 / 2;
+    return COIN * 30;
 }
 
 bool IsInitialBlockDownload()
@@ -2468,7 +2468,7 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     pindex->nStakeModifier = ComputeStakeModifier(pindex->pprev, block.IsProofOfStake() ? block.vtx[1].vin[0].prevout.hash : pindex->GetBlockHash());
 
     // Check proof-of-stake
-    if (block.IsProofOfStake() && block.GetBlockTime() > chainparams.GetConsensus().nProtocolV3Time) {
+    if (block.IsProofOfStake()) {
          const COutPoint &prevout = block.vtx[1].vin[0].prevout;
          const CCoins *coins = view.AccessCoins(prevout.hash);
           if (!coins)
@@ -2543,9 +2543,9 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     // BlackCoin also requires low S in sigs
     flags |= SCRIPT_VERIFY_LOW_S;
 
-    // Start enforcing CHECKLOCKTIMEVERIFY, (BIP65) since protocol v3
+    // Start enforcing CHECKLOCKTIMEVERIFY, (BIP65) since POS
 
-    if (block.GetBlockTime() > chainparams.GetConsensus().nProtocolV3Time) {
+    if (block.IsProofOfStake()) {
         flags |= SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
         flags |= SCRIPT_VERIFY_NULLDUMMY;
     }
@@ -2721,7 +2721,7 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
                                        REJECT_INVALID, "bad-cb-amount");
     }
 	
-    if (block.IsProofOfStake() && block.GetBlockTime() > chainparams.GetConsensus().nProtocolV3Time) {
+    if (block.IsProofOfStake()) {
             CAmount blockReward = nFees + GetProofOfStakeSubsidy();
             if (nActualStakeReward > blockReward)
                 return state.DoS(100,
@@ -3434,15 +3434,13 @@ bool GetCoinAge(const CTransaction& tx, CBlockTreeDB& txdb, const CBlockIndex* p
 	        if (tx.nTime < txPrev.nTime)
 	            return false;  // Transaction timestamp violation
 
-	        if (Params().GetConsensus().IsProtocolV3(tx.nTime))
+	        int nSpendDepth;
+	        if (IsConfirmedInNPrevBlocks(txindex, pindexPrev, nStakeMinConfirmations - 1, nSpendDepth))
 	        {
-	            int nSpendDepth;
-	            if (IsConfirmedInNPrevBlocks(txindex, pindexPrev, nStakeMinConfirmations - 1, nSpendDepth))
-	            {
-	                LogPrint("coinage", "coin age skip nSpendDepth=%d\n", nSpendDepth + 1);
-	                continue; // only count coins meeting min confirmations requirement
-	            }
+	            LogPrint("coinage", "coin age skip nSpendDepth=%d\n", nSpendDepth + 1);
+	            continue; // only count coins meeting min confirmations requirement
 	        }
+            
 	        else
 	        {
 	            // Read block header
@@ -3682,9 +3680,11 @@ static bool CheckBlockSignature(const CBlock& block, const uint256& hash)
 
 bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, bool fCheckPOW)
 {
+    /*
 	if (block.nVersion < 7 && Params().GetConsensus().IsProtocolV2(block.GetBlockTime()))
 	        return state.Invalid(error("%s: rejected nVersion=%d block", __func__, block.nVersion),
 	REJECT_OBSOLETE, "bad-version");
+    */
 
     // Check proof of work matches claimed amount
     if (fCheckPOW && !CheckProofOfWork(block.GetPoWHash(), block.nBits, Params().GetConsensus()))

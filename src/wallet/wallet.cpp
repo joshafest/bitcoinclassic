@@ -41,8 +41,8 @@ unsigned int nTxConfirmTarget = DEFAULT_TX_CONFIRM_TARGET;
 bool bSpendZeroConfChange = DEFAULT_SPEND_ZEROCONF_CHANGE;
 bool fSendFreeTransactions = DEFAULT_SEND_FREE_TRANSACTIONS;
 
-static int64_t GetStakeCombineThreshold() { return 500 * COIN; }
-static int64_t GetStakeSplitThreshold() { return 2 * GetStakeCombineThreshold(); }
+static int64_t GetStakeCombineThreshold() { return 5000 * COIN; }
+static int64_t GetStakeSplitThreshold() { return 1 * GetStakeCombineThreshold(); }
 
 /**
  * Fees smaller than this (in satoshi) are considered zero fee (for transaction creation)
@@ -599,10 +599,10 @@ bool CheckKernel(CBlockIndex* pindexPrev, unsigned int nBits, int64_t nTime, con
 int64_t GetProofOfStakeReward(const CBlockIndex* pindexPrev, int64_t nCoinAge, int64_t nFees)
 {
     int64_t nSubsidy;
-    if (Params().GetConsensus().IsProtocolV3(pindexPrev->nTime))
-        nSubsidy = COIN * 3 / 2;
-    else
-        nSubsidy = nCoinAge * 1 * CENT * 33 / (365 * 33 + 8);
+    /* if (Params().GetConsensus().IsHardFork1(pindexPrev->nTime))
+        nSubsidy = COIN * 10;
+    else */
+        nSubsidy = COIN * 30;
 
     LogPrint("creation", "GetProofOfStakeReward(): create=%s nCoinAge=%d\n", FormatMoney(nSubsidy), nCoinAge);
 
