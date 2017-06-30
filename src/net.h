@@ -7,6 +7,7 @@
 #ifndef BITCOIN_NET_H
 #define BITCOIN_NET_H
 
+#include "addrman.h"
 #include "bloom.h"
 #include "compat.h"
 #include "limitedmap.h"
@@ -86,29 +87,64 @@ unsigned int ReceiveFloodSize();
 unsigned int SendBufferSize();
 
 void AddOneShot(const std::string& strDest);
-void AddressCurrentlyConnected(const CService& addr);
 CNode* FindNode(const CNetAddr& ip);
 CNode* FindNode(const CSubNet& subNet);
 CNode* FindNode(const std::string& addrName);
 CNode* FindNode(const CService& ip);
 CNode* ConnectNode(CAddress addrConnect, const char *pszDest = NULL);
-bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOutbound = NULL, const char *strDest = NULL, bool fOneShot = false);
 
-struct ListenSocket {
-    SOCKET socket;
-    bool whitelisted;
-
-    ListenSocket(SOCKET socket_, bool whitelisted_) : socket(socket_), whitelisted(whitelisted_) {}
-};
 
 class CConnman
 {
 public:
     CConnman();
     ~CConnman();
-    bool Start(boost::thread_group& threadGroup, std::string& strNodeError);
+    bool Start(boost::thread_group& threadGroup, CScheduler& scheduler, std::string& strNodeError);
     void Stop();
+	bool BindListenPort(const CService &bindAddr, std::string& strError, bool fWhitelisted = false);
+	bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOutbound = NULL, const char *strDest = NULL, bool fOneShot = false);
+	
+	// Addrman functions
+    size_t GetAddressCount() const;
+    void SetServices(const CService &addr, ServiceFlags nServices);
+    void MarkAddressGood(const CAddress& addr);
+    void AddNewAddress(const CAddress& addr, const CAddress& addrFrom, int64_t nTimePenalty = 0);
+    void AddNewAddresses(const std::vector<CAddress>& vAddr, const CAddress& addrFrom, int64_t nTimePenalty = 0);
+    std::vector<CAddress> GetAddresses();
+    void AddressCurrentlyConnected(const CService& addr);
+
+    // Denial-of-service detection/prevention
+    // The idea is to detect peers that are behaving
+    // badly and disconnect/ban them, but do it in a
+    // one-coding-mistake-won't-shatter-the-entire-network
+    // way.
+    // IMPORTANT:  There should be nothing I can give a
+    // node that it will forward on that will make that
+    // node's peers drop it. If there is, an attacker
+    // can isolate a node and/or try to split the network.
+    // Dropping a node for sending stuff that is invalid
+    // now but might be valid in a later version is also
+    // dangerous, because it can cause a network split
+    // between nodes running old code and nodes running
+    // new code.
+    void Ban(const CNetAddr& netAddr, const BanReason& reason, int64_t bantimeoffset = 0, bool sinceUnixEpoch = false);
+    void Ban(const CSubNet& subNet, const BanReason& reason, int64_t bantimeoffset = 0, bool sinceUnixEpoch = false);
+    void ClearBanned(); // needed for unit testing
+    bool IsBanned(CNetAddr ip);
+    bool IsBanned(CSubNet subnet);
+    bool Unban(const CNetAddr &ip);
+    bool Unban(const CSubNet &ip);
+    void GetBanned(banmap_t &banmap);
+    void SetBanned(const banmap_t &banmap);
+
 private:
+	struct ListenSocket {
+        SOCKET socket;
+        bool whitelisted;
+
+        ListenSocket(SOCKET socket_, bool whitelisted_) : socket(socket_), whitelisted(whitelisted_) {}
+    };
+
     void ThreadOpenAddedConnections();
     void ProcessOneShot();
     void ThreadOpenConnections();
@@ -116,6 +152,25 @@ private:
     void AcceptConnection(const ListenSocket& hListenSocket);
     void ThreadSocketHandler();
     void ThreadDNSAddressSeed();
+	
+	CNode* ConnectNode(CAddress addrConnect, const char *pszDest, bool fCountFailure);
+	void DeleteNode(CNode* pnode);
+	//!check is the banlist has unwritten changes
+    bool BannedSetIsDirty();
+    //!set the "dirty" flag for the banlist
+    void SetBannedSetDirty(bool dirty=true);
+    //!clean unused entries (if bantime has expired)
+    void SweepBanned();
+    void DumpAddresses();
+    void DumpData();
+    void DumpBanlist();
+	
+    std::vector<ListenSocket> vhListenSocket;
+	banmap_t setBanned;
+    CCriticalSection cs_setBanned;
+    bool setBannedIsDirty;
+    bool fAddressesInitialized;
+    CAddrMan addrman;
 };
 extern std::unique_ptr<CConnman> g_connman;
 
@@ -150,7 +205,7 @@ struct CNodeSignals
     boost::signals2::signal<bool (CNode*, CConnman&), CombinerAll> ProcessMessages;
     boost::signals2::signal<bool (CNode*, CConnman&), CombinerAll> SendMessages;
     boost::signals2::signal<void (NodeId, const CNode*)> InitializeNode;
-    boost::signals2::signal<void (NodeId)> FinalizeNode;
+    boost::signals2::signal<void (NodeId, bool&)> FinalizeNode;
 };
 
 
@@ -188,7 +243,6 @@ extern bool fDiscover;
 extern bool fListen;
 extern uint64_t nLocalServices;
 extern uint64_t nLocalHostNonce;
-extern CAddrMan addrman;
 
 /** Maximum number of connections to simultaneously allow (aka connection slots) */
 extern int nMaxConnections;
@@ -410,12 +464,6 @@ public:
     uint16_t addrFromPort;
 
 protected:
-
-    // Denial-of-service detection/prevention
-    // Key is IP address, value is banned-until-time
-    static banmap_t setBanned;
-    static CCriticalSection cs_setBanned;
-    static bool setBannedIsDirty;
 
     // Whitelisted ranges. Any node connecting from these is automatically
     // whitelisted (as well as those connecting to whitelisted binds).
@@ -745,37 +793,6 @@ public:
     }
 
     void CloseSocketDisconnect();
-
-    // Denial-of-service detection/prevention
-    // The idea is to detect peers that are behaving
-    // badly and disconnect/ban them, but do it in a
-    // one-coding-mistake-won't-shatter-the-entire-network
-    // way.
-    // IMPORTANT:  There should be nothing I can give a
-    // node that it will forward on that will make that
-    // node's peers drop it. If there is, an attacker
-    // can isolate a node and/or try to split the network.
-    // Dropping a node for sending stuff that is invalid
-    // now but might be valid in a later version is also
-    // dangerous, because it can cause a network split
-    // between nodes running old code and nodes running
-    // new code.
-    static void ClearBanned(); // needed for unit testing
-    static bool IsBanned(CNetAddr ip);
-    static bool IsBanned(CSubNet subnet);
-    static void Ban(const CNetAddr &ip, const BanReason &banReason, int64_t bantimeoffset = 0, bool sinceUnixEpoch = false);
-    static void Ban(const CSubNet &subNet, const BanReason &banReason, int64_t bantimeoffset = 0, bool sinceUnixEpoch = false);
-    static bool Unban(const CNetAddr &ip);
-    static bool Unban(const CSubNet &ip);
-    static void GetBanned(banmap_t &banmap);
-    static void SetBanned(const banmap_t &banmap);
-
-    //!check is the banlist has unwritten changes
-    static bool BannedSetIsDirty();
-    //!set the "dirty" flag for the banlist
-    static void SetBannedSetDirty(bool dirty=true);
-    //!clean unused entries (if bantime has expired)
-    static void SweepBanned();
 
     void copyStats(CNodeStats &stats);
 

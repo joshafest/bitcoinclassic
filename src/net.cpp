@@ -78,10 +78,7 @@ map<CNetAddr, LocalServiceInfo> mapLocalHost;
 static bool vfLimited[CNetAddr::NET_MAX] = {};
 static CNode* pnodeLocalHost = NULL;
 uint64_t nLocalHostNonce = 0;
-static std::vector<ListenSocket> vhListenSocket;
-CAddrMan addrman;
 int nMaxConnections = DEFAULT_MAX_PEER_CONNECTIONS;
-bool fAddressesInitialized = false;
 
 vector<CNode*> vNodes;
 CCriticalSection cs_vNodes;
@@ -314,11 +311,6 @@ bool IsReachable(const CNetAddr& addr)
     return IsReachable(net);
 }
 
-void AddressCurrentlyConnected(const CService& addr)
-{
-    addrman.Connected(addr);
-}
-
 
 uint64_t CNode::nTotalBytesRecv = 0;
 uint64_t CNode::nTotalBytesSent = 0;
@@ -366,7 +358,7 @@ CNode* FindNode(const CService& addr)
     return NULL;
 }
 
-CNode* ConnectNode(CAddress addrConnect, const char *pszDest)
+CNode* CConnman::ConnectNode(CAddress addrConnect, const char *pszDest)
 {
     if (pszDest == NULL) {
         if (IsLocal(addrConnect))
@@ -402,6 +394,7 @@ CNode* ConnectNode(CAddress addrConnect, const char *pszDest)
 
         // Add node
         CNode* pnode = new CNode(hSocket, addrConnect, pszDest ? pszDest : "", false);
+		GetNodeSignals().InitializeNode(pnode->GetId(), pnode);
         pnode->AddRef();
 
         {
@@ -456,18 +449,16 @@ void CNode::PushVersion()
 
 
 
-banmap_t CNode::setBanned;
-CCriticalSection CNode::cs_setBanned;
-bool CNode::setBannedIsDirty;
 
-void CNode::ClearBanned()
+
+void CConnman::ClearBanned()
 {
     LOCK(cs_setBanned);
     setBanned.clear();
     setBannedIsDirty = true;
 }
 
-bool CNode::IsBanned(CNetAddr ip)
+bool CConnman::IsBanned(CNetAddr ip)
 {
     bool fResult = false;
     {
@@ -484,7 +475,7 @@ bool CNode::IsBanned(CNetAddr ip)
     return fResult;
 }
 
-bool CNode::IsBanned(CSubNet subnet)
+bool CConnman::IsBanned(CSubNet subnet)
 {
     bool fResult = false;
     {
@@ -500,12 +491,12 @@ bool CNode::IsBanned(CSubNet subnet)
     return fResult;
 }
 
-void CNode::Ban(const CNetAddr& addr, const BanReason &banReason, int64_t bantimeoffset, bool sinceUnixEpoch) {
+void CConnman::Ban(const CNetAddr& addr, const BanReason &banReason, int64_t bantimeoffset, bool sinceUnixEpoch) {
     CSubNet subNet(addr);
     Ban(subNet, banReason, bantimeoffset, sinceUnixEpoch);
 }
 
-void CNode::Ban(const CSubNet& subNet, const BanReason &banReason, int64_t bantimeoffset, bool sinceUnixEpoch) {
+void CConnman::Ban(const CSubNet& subNet, const BanReason &banReason, int64_t bantimeoffset, bool sinceUnixEpoch) {
     CBanEntry banEntry(GetTime());
     banEntry.banReason = banReason;
     if (bantimeoffset <= 0)
@@ -522,12 +513,12 @@ void CNode::Ban(const CSubNet& subNet, const BanReason &banReason, int64_t banti
     setBannedIsDirty = true;
 }
 
-bool CNode::Unban(const CNetAddr &addr) {
+bool CConnman::Unban(const CNetAddr &addr) {
     CSubNet subNet(addr);
     return Unban(subNet);
 }
 
-bool CNode::Unban(const CSubNet &subNet) {
+bool CConnman::Unban(const CSubNet &subNet) {
     LOCK(cs_setBanned);
     if (setBanned.erase(subNet))
     {
@@ -537,20 +528,20 @@ bool CNode::Unban(const CSubNet &subNet) {
     return false;
 }
 
-void CNode::GetBanned(banmap_t &banMap)
+void CConnman::GetBanned(banmap_t &banMap)
 {
     LOCK(cs_setBanned);
     banMap = setBanned; //create a thread safe copy
 }
 
-void CNode::SetBanned(const banmap_t &banMap)
+void CConnman::SetBanned(const banmap_t &banMap)
 {
     LOCK(cs_setBanned);
     setBanned = banMap;
     setBannedIsDirty = true;
 }
 
-void CNode::SweepBanned()
+void CConnman::SweepBanned()
 {
     int64_t now = GetTime();
 
@@ -569,13 +560,13 @@ void CNode::SweepBanned()
     }
 }
 
-bool CNode::BannedSetIsDirty()
+bool CConnman::BannedSetIsDirty()
 {
     LOCK(cs_setBanned);
     return setBannedIsDirty;
 }
 
-void CNode::SetBannedSetDirty(bool dirty)
+void CConnman::SetBannedSetDirty(bool dirty)
 {
     LOCK(cs_setBanned); //reuse setBanned lock for the isDirty flag
     setBannedIsDirty = dirty;
@@ -978,7 +969,7 @@ void CConnman::AcceptConnection(const ListenSocket& hListenSocket) {
     setsockopt(hSocket, IPPROTO_TCP, TCP_NODELAY, (void*)&set, sizeof(int));
 #endif
 
-    if (CNode::IsBanned(addr) && !whitelisted)
+    if (IsBanned(addr) && !whitelisted)
     {
         LogPrintf("connection from %s dropped (banned)\n", addr.ToString());
         CloseSocket(hSocket);
@@ -996,6 +987,7 @@ void CConnman::AcceptConnection(const ListenSocket& hListenSocket) {
     }
 
     CNode* pnode = new CNode(hSocket, addr, "", true);
+	GetNodeSignals().InitializeNode(pnode->GetId(), pnode);
     pnode->AddRef();
     pnode->fWhitelisted = whitelisted;
 
@@ -1072,7 +1064,7 @@ void CConnman::ThreadSocketHandler()
                     if (fDelete)
                     {
                         vNodesDisconnected.remove(pnode);
-                        delete pnode;
+                        DeleteNode(pnode);
                     }
                 }
             }
@@ -1461,7 +1453,7 @@ void CConnman::ThreadDNSAddressSeed()
 
 
 
-void DumpAddresses()
+void CConnman::DumpAddresses()
 {
     int64_t nStart = GetTimeMillis();
 
@@ -1486,7 +1478,7 @@ void DumpAddresses()
            addrman.size(), GetTimeMillis() - nStart);
 }
 
-void DumpData()
+void CConnman::DumpData()
 {
     DumpAddresses();
 
@@ -1725,7 +1717,7 @@ void CConnman::ThreadOpenAddedConnections()
 }
 
 // if successful, this moves the passed grant to the constructed node
-bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOutbound, const char *pszDest, bool fOneShot)
+bool CConnman::OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOutbound, const char *pszDest, bool fOneShot)
 {
     //
     // Initiate outbound network connection
@@ -1733,7 +1725,7 @@ bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOu
     boost::this_thread::interruption_point();
     if (!pszDest) {
         if (IsLocal(addrConnect) ||
-            FindNode((CNetAddr)addrConnect) || CNode::IsBanned(addrConnect) ||
+            FindNode((CNetAddr)addrConnect) || IsBanned(addrConnect) ||
             FindNode(addrConnect.ToStringIPPort()))
             return false;
     } else if (FindNode(std::string(pszDest)))
@@ -1832,7 +1824,7 @@ void CConnman::ThreadMessageHandler()
 
 
 
-bool BindListenPort(const CService &addrBind, string& strError, bool fWhitelisted)
+bool CConnman::BindListenPort(const CService &addrBind, string& strError, bool fWhitelisted)
 {
     strError = "";
     int nOne = 1;
@@ -1983,10 +1975,22 @@ void static Discover(boost::thread_group& threadGroup)
 
 CConnman::CConnman()
 {
+	setBannedIsDirty = false;
+    fAddressesInitialized = false;
 }
 
 bool StartNode(CConnman& connman, boost::thread_group& threadGroup, CScheduler& scheduler, std::string& strNodeError)
 {
+	Discover(threadGroup);
+
+    bool ret = connman.Start(threadGroup, scheduler, strNodeError);
+
+    return ret;
+}
+
+bool CConnman::Start(boost::thread_group& threadGroup, CScheduler& scheduler, std::string& strNodeError)
+{
+
     uiInterface.InitMessage(_("Loading addresses..."));
     // Load addresses for peers.dat
     int64_t nStart = GetTimeMillis();
@@ -2006,25 +2010,13 @@ bool StartNode(CConnman& connman, boost::thread_group& threadGroup, CScheduler& 
     if (!bandb.Read(banmap))
         LogPrintf("Could not read banlist.dat, starting with empty list.\n");
 
-    CNode::SetBanned(banmap); //thread save setter
-    CNode::SetBannedSetDirty(false); //no need to write down just read or nonexistent data
-    CNode::SweepBanned(); //sweap out unused entries
+    SetBanned(banmap); //thread save setter
+    SetBannedSetDirty(false); //no need to write down just read or nonexistent data
+    SweepBanned(); //sweap out unused entries
 
     LogPrintf("Loaded %i addresses from peers.dat  %dms\n",
            addrman.size(), GetTimeMillis() - nStart);
     fAddressesInitialized = true;
-	
-	Discover(threadGroup);
-
-    bool ret = connman.Start(threadGroup, strNodeError);
-
-    // Dump network addresses
-    scheduler.scheduleEvery(DumpData, DUMP_ADDRESSES_INTERVAL);
-    return ret;
-}
-
-bool CConnman::Start(boost::thread_group& threadGroup, std::string& strNodeError)
-{
 
     if (semOutbound == NULL) {
         // initialize semaphore
@@ -2032,9 +2024,10 @@ bool CConnman::Start(boost::thread_group& threadGroup, std::string& strNodeError
         semOutbound = new CSemaphore(nMaxOutbound);
     }
 
-    if (pnodeLocalHost == NULL)
+    if (pnodeLocalHost == NULL){
         pnodeLocalHost = new CNode(INVALID_SOCKET, CAddress(CService("127.0.0.1", 0), nLocalServices));
-
+		GetNodeSignals().InitializeNode(pnodeLocalHost->GetId(), pnodeLocalHost);
+	}
 
     //
     // Start threads
@@ -2060,6 +2053,9 @@ bool CConnman::Start(boost::thread_group& threadGroup, std::string& strNodeError
     // Process messages
     threadGroup.create_thread(boost::bind(&TraceThread<boost::function<void()> >, "msghand", boost::function<void()>(boost::bind(&CConnman::ThreadMessageHandler, this))));
 
+	// Dump network addresses
+    scheduler.scheduleEvery(boost::bind(&CConnman::DumpData, this), DUMP_ADDRESSES_INTERVAL);
+	
     return true;
 	
 	
@@ -2069,14 +2065,7 @@ bool StopNode(CConnman& connman)
 {
     LogPrintf("StopNode()\n");
     MapPort(false);
-    
-
-    if (fAddressesInitialized)
-    {
-        DumpData();
-        fAddressesInitialized = false;
-    }
-	
+   
 	connman.Stop();
     return true;
 }
@@ -2103,6 +2092,14 @@ void CConnman::Stop()
     if (semOutbound)
         for (int i=0; i<(MAX_OUTBOUND_CONNECTIONS + MAX_FEELER_CONNECTIONS); i++)
             semOutbound->post();
+		
+		
+	if (fAddressesInitialized)
+    {
+        DumpData();
+        fAddressesInitialized = false;
+    }
+
 
     // Close sockets
     BOOST_FOREACH(CNode* pnode, vNodes)
@@ -2114,26 +2111,65 @@ void CConnman::Stop()
                 LogPrintf("CloseSocket(hListenSocket) failed with error %s\n", NetworkErrorString(WSAGetLastError()));
 
     // clean up some globals (to help leak detection)
-    BOOST_FOREACH(CNode *pnode, vNodes)
-        delete pnode;
-    BOOST_FOREACH(CNode *pnode, vNodesDisconnected)
-        delete pnode;
+    BOOST_FOREACH(CNode *pnode, vNodes) {
+        DeleteNode(pnode);
+    }
+    BOOST_FOREACH(CNode *pnode, vNodesDisconnected) {
+        DeleteNode(pnode);
+    }
     vNodes.clear();
     vNodesDisconnected.clear();
     vhListenSocket.clear();
     delete semOutbound;
     semOutbound = NULL;
-    delete pnodeLocalHost;
+    if(pnodeLocalHost)
+        DeleteNode(pnodeLocalHost);
     pnodeLocalHost = NULL;
+}
+
+void CConnman::DeleteNode(CNode* pnode)
+{
+    assert(pnode);
+    bool fUpdateConnectionTime = false;
+    GetNodeSignals().FinalizeNode(pnode->GetId(), fUpdateConnectionTime);
+    if(fUpdateConnectionTime)
+        addrman.Connected(pnode->addr);
+    delete pnode;
 }
 
 CConnman::~CConnman()
 {
 }
 
+size_t CConnman::GetAddressCount() const
+{
+    return addrman.size();
+}
 
+void CConnman::SetServices(const CService &addr, ServiceFlags nServices)
+{
+    addrman.SetServices(addr, nServices);
+}
 
+void CConnman::MarkAddressGood(const CAddress& addr)
+{
+    addrman.Good(addr);
+}
 
+void CConnman::AddNewAddress(const CAddress& addr, const CAddress& addrFrom, int64_t nTimePenalty)
+{
+    addrman.Add(addr, addrFrom, nTimePenalty);
+}
+
+void CConnman::AddNewAddresses(const std::vector<CAddress>& vAddr, const CAddress& addrFrom, int64_t nTimePenalty)
+{
+    addrman.Add(vAddr, addrFrom, nTimePenalty);
+}
+
+std::vector<CAddress> CConnman::GetAddresses()
+{
+    return addrman.GetAddr();
+}
 
 
 void RelayTransaction(const CTransaction& tx)
@@ -2501,7 +2537,6 @@ CNode::CNode(SOCKET hSocketIn, const CAddress& addrIn, const std::string& addrNa
     if (hSocket != INVALID_SOCKET && !fInbound)
         PushVersion();
 
-    GetNodeSignals().InitializeNode(GetId(), this);
 }
 
 CNode::~CNode()
@@ -2514,7 +2549,6 @@ CNode::~CNode()
 
     addrFromPort = 0;
 
-    GetNodeSignals().FinalizeNode(GetId());
 }
 
 void CNode::AskFor(const CInv& inv)
@@ -2712,15 +2746,15 @@ bool CBanDB::Read(banmap_t& banSet)
     return true;
 }
 
-void DumpBanlist()
+void CConnman::DumpBanlist()
 {
     int64_t nStart = GetTimeMillis();
 
-    CNode::SweepBanned(); //clean unused entries (if bantime has expired)
+    SweepBanned(); //clean unused entries (if bantime has expired)
 
     CBanDB bandb;
     banmap_t banmap;
-    CNode::GetBanned(banmap);
+    GetBanned(banmap);
     bandb.Write(banmap);
 
     LogPrint("net", "Flushed %d banned node ips/subnets to banlist.dat  %dms\n",
