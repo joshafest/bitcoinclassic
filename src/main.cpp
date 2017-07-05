@@ -1679,7 +1679,13 @@ bool ReadFromDisk(CTransaction& tx, CDiskTxPos& txindex)
 
 CAmount GetProofOfWorkSubsidy()
 {
-	return 0 * COIN;
+    if (chainActive.Height() == 1) {
+        return 145000000 * COIN;
+    }
+    
+    else {
+        return 0 * COIN;
+    }
 }
 
 CAmount GetProofOfStakeSubsidy()
