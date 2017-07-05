@@ -34,7 +34,7 @@ static CBlock CreateGenesisBlock(const char* pszTimestamp, const CScript& genesi
 	genesis.hashMerkleRoot = uint256S("0e58d4b3215bb1889d5a027d40269a167b93c68e9ae28961de4717558be92d38");
 	genesis.nVersion = 1;
 	genesis.nTime    = 1480636800;
-	genesis.nBits    = 0x1e0fffff;
+	genesis.nBits    = 0x1e0ffff0;
 	genesis.nNonce   = 499515;
     return genesis;
 }
@@ -135,7 +135,7 @@ public:
         genesis.hashPrevBlock.SetNull();
         genesis.nVersion = 1;
         genesis.nTime    = 1480636800;
-        genesis.nBits    = 0x1e0fffff;
+        genesis.nBits    = 0x1e0ffff0;
         genesis.nNonce = 499515;
         genesis.hashMerkleRoot = BlockMerkleRoot(genesis);
         consensus.hashGenesisBlock = genesis.GetHash();
@@ -186,7 +186,7 @@ public:
         consensus.nMajorityWindow = 100;
         consensus.BIP34Height = 21111;
         consensus.BIP34Hash = uint256S("0x0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8");
-        consensus.powLimit = uint256S("0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+        consensus.powLimit = uint256S("00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.nHardFork1Time = 0;
         consensus.nLastPOWBlock = 0x7fffffff;
@@ -199,7 +199,7 @@ public:
         nMaxTipAge = 0x7fffffff;
         nPruneAfterHeight = 1000;
 
-        genesis = CreateGenesisBlock(1411111111, 216178, 0x1f00ffff, 2, 50 * COIN);
+        genesis = CreateGenesisBlock(1480636800, 499515, 0x1e0ffff0, 2, 50 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
 
 
