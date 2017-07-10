@@ -34,7 +34,7 @@ static CBlock CreateGenesisBlock(const char* pszTimestamp, const CScript& genesi
 	genesis.hashMerkleRoot = uint256S("0e58d4b3215bb1889d5a027d40269a167b93c68e9ae28961de4717558be92d38");
 	genesis.nVersion = 1;
 	genesis.nTime    = 1480636800;
-	genesis.nBits    = 0x1e0ffff0;
+	genesis.nBits    = 0x1e0fffff;
 	genesis.nNonce   = 499515;
     return genesis;
 }
@@ -135,7 +135,7 @@ public:
         genesis.hashPrevBlock.SetNull();
         genesis.nVersion = 1;
         genesis.nTime    = 1480636800;
-        genesis.nBits    = 0x1e0ffff0;
+        genesis.nBits    = 0x1e0fffff;
         genesis.nNonce = 499515;
         genesis.hashMerkleRoot = BlockMerkleRoot(genesis);
         consensus.hashGenesisBlock = genesis.GetHash();
