@@ -83,7 +83,7 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
 
     // Check proof of work matches claimed amount
     // Hack to avoid check for genesis block
-    if (UintToArith256(hash) > bnTarget && hash != params.hashGenesisBlock)
+    if (UintToArith256(hash) > bnTarget && hash != uint256S("0x2acfa8ef95f8014d38217cdcecd3850e081a86976bb1bb8497f519fc1dcac3bc"))
         return error("CheckProofOfWork(): hash doesn't match nBits");
 
     return true;
