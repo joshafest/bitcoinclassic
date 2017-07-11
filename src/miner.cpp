@@ -298,7 +298,7 @@ CBlockTemplate* CreateNewBlock(const CChainParams& chainparams, const CScript& s
 
         // Compute final coinbase transaction.
 		if (!fProofOfStake) {
-			txNew.vout[0].nValue = nFees +  GetProofOfWorkSubsidy();
+			txNew.vout[0].nValue = nFees +  GetProofOfWorkSubsidy(nHeight);
 			txNew.vin[0].scriptSig = CScript() << nHeight << OP_0;
 			pblocktemplate->vTxFees[0] = -nFees;
 		}
