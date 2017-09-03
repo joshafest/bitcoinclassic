@@ -48,8 +48,8 @@ unsigned int CalculateNextTargetRequired(const CBlockIndex* pindexLast, int64_t 
 	if (params.fPowNoRetargeting)
 	    	return pindexLast->nBits;
 
-    int64_t nActualSpacing = pindexLast->GetBlockTime() - nFirstBlockTime;
-    int64_t nTargetSpacing = params.nTargetSpacing;
+    int64_t nActualSpacing = pindexPrev->GetBlockTime() - pindexPrevPrev->GetBlockTime();
+    int64_t nTargetSpacing = 90;//nStakeTargetSpacing
 
     // Limit adjustment step
     if (nActualSpacing > nTargetSpacing * 10)
